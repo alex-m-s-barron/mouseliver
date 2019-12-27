@@ -12,20 +12,40 @@ library("sctransform")
 #library(DittoSeq)
 library(colorspace)
 library(dplyr)
+library(ggplot2)
 sessionInfo()
 ```
 
-Load data. To create the files loaded here, Kellie turned the raw 10X data into a Seurat Object. I am not sure of the exact QC steps she took, but am guessing they were similar to the usual filtering which gets rid of cells with few unique reads or too many unique reads (e.g. doublets), as well as dead cells with high proportions of mitochondrial reads. Expression values were likely log-normalized, the 2000 genes with the most cell-to-cell variation were identified and then the expression values were scaled so that highly expressed genes don't dominate the PCA or other graphical representations of the data.
+Load data. To create the files loaded here, Kellie turned the raw 10X data into a Seurat Object. I am not sure of the exact QC steps she took, but am guessing they were similar to the usual filtering which gets rid of cells with few unique reads or too many unique reads (e.g. doublets), as well as dead cells with high proportions of mitochondrial reads. Expression values were likely log-normalized, the 2000 genes with the most cell-to-cell variation were identified and then the expression values were scaled so that highly expressed genes don't dominate the PCA or other graphical representations of the data. This was all probably done using the sctransform package and workflow.
 ```{r}
 liver.integrated = UpdateSeuratObject(readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_integrated_object.rds"))
 liver.integrated.markers = UpdateSeuratObject(readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_peak_markers.rds"))
 ```
 
-The markers file is too old to update in the current version of Seurat. Rather than install an older version--and for practice to better understand how Kellie made the files--I will re-use some of her code to make a new markers file with the current version of Seurat (3.1.1). The "FindAllMarkers" command in Seurat 
+The markers file is too old to update in the current version of Seurat. Rather than install an older version--and for practice to better understand how Kellie made the files--I will re-use some of her code to make a new markers file with the current version of Seurat (3.1.1). The "FindAllMarkers" command in Seurat identifies the genes that define each cluster. Within this argument, the min.pct and logfc.threshold arguments set cutoffs below which genes won't be included in the cluster marker definitions. Because this step is computationally intensive, I am saving the output of this to the server.
 ```{r}
 liver.integrated.markers= FindAllMarkers(liver.integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+saveRDS(liver.integrated.markers, "/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_peak_markers.rds")
 ```
 
+Use Kellie's code to create a heatmap of the top 10 genes marking each cluster. 
+```{r fig.height=20}
+liver.integrated.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_logFC) -> top10
+#top10heatmap<-DoHeatmap(liver.integrated, features = top10$gene) + NoLegend()
+#top10heatmap
+DoHeatmap(liver.integrated, features = top10$gene) + NoLegend()
+```
+This is a bit computationally heavy, so also saving the file for easy access.
+```{r}
+ggsave(filename = "/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_peak_top10genes_heatmap.png", height = 15, width = 20, scale=0.75, plot = top10heatmap)
+```
+
+
+View some of Kellie's plots to get a feeling for the analyses she performed. These two show UMAPs of the integrated data with cluster lables, and the contribution of each sample to the integrated UMAP.
+```{r fig.height=10, fig.width=10}
+DimPlot(liver.integrated, label = T)
+DimPlot(liver.integrated, label = F, split.by = "sample")
+```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
