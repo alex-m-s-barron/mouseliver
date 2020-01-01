@@ -20,6 +20,7 @@ Load data. To create the files loaded here, Kellie turned the raw 10X data into 
 ```{r}
 liver.integrated = UpdateSeuratObject(readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_integrated_object.rds"))
 liver.integrated.markers = UpdateSeuratObject(readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_peak_markers.rds"))
+sample.list = readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/sample.list.rds")
 ```
 
 The markers file is too old to update in the current version of Seurat. Rather than install an older version--and for practice to better understand how Kellie made the files--I will re-use some of her code to make a new markers file with the current version of Seurat (3.1.1). The "FindAllMarkers" command in Seurat identifies the genes that define each cluster. Within this argument, the min.pct and logfc.threshold arguments set cutoffs below which genes won't be included in the cluster marker definitions. Because this step is computationally intensive, I am saving the output of this to the server.
@@ -43,9 +44,11 @@ ggsave(filename = "/hpc/grid/wip_cmg_systems-immunology/abarron/CCl4_AMLN_peak_t
 
 View some of Kellie's plots to get a feeling for the analyses she performed. These two show UMAPs of the integrated data with cluster lables, and the contribution of each sample to the integrated UMAP.
 ```{r fig.height=10, fig.width=10}
-DimPlot(liver.integrated, label = T)
+DimPlot(liver.integrated, label = T, repel = T) + NoLegend()
 DimPlot(liver.integrated, label = F, split.by = "sample")
+DimPlot(liver.integrated, label = F, group.by = "sample")
 ```
+AMLN and CCl4-2 appear to dominate the myeloid and granulocyte clusters. Naive-2 dominates the hepatocyte cluster.
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
