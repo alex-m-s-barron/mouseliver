@@ -4,15 +4,25 @@ author: "Alex Barron"
 date: "12/9/2019"
 output: html_document
 ---
+Knitr setup is currently a work in progress...
+```{r setup, include=FALSE, cache = FALSE}
+require("knitr")
+## setting working directory
+knitr::opts_knit$set(root.dir = "/hpc/grid/wip_cmg_systems-immunology/abarron/")
+getwd()
+```
+
+
 Load necessary packages
 ```{r}
 library("Seurat")
 library("sctransform")
-#library(tidyverse)
+library(tidyverse)
 #library(DittoSeq)
 library(colorspace)
 library(dplyr)
 library(ggplot2)
+library(hdf5r)
 sessionInfo()
 ```
 
@@ -50,9 +60,38 @@ DimPlot(liver.integrated, label = F, group.by = "sample")
 ```
 AMLN and CCl4-2 appear to dominate the myeloid and granulocyte clusters. Naive-2 dominates the hepatocyte cluster.
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+
+Start integrating the CCl4 regression data here...
+```{r}
+CCl4_recovery_3_C57B16_CCl4_4_2wk = Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_3_C57B16_CCl4_4_2wk_weterror/outs/filtered_feature_bc_matrix.h5")
+CCl4_recovery_5_Balbc_CCl4_4_0wk= Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_5_Balbc_CCl4_4_0wk/outs/filtered_feature_bc_matrix.h5")
+CCl4_recovery_6_Balbc_CCl4_4_0wk = Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_6_Balbc_CCl4_4_0wk/outs/filtered_feature_bc_matrix.h5")
+CCl4_recovery_2_C57B16_CCl4_4_1wk = Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_2_C57B16_CCl4_4_1wk_weterror/outs/filtered_feature_bc_matrix.h5")
+CCl4_recovery_1_C57B16_CCl4_4_0wk = Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_1_C57B16_CCl4_4_0wk/outs/filtered_feature_bc_matrix.h5")
+CCl4_recovery_4_C57B16_CCl4_4_4wk = Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_4_C57B16_CCl4_4_4wk/outs/filtered_feature_bc_matrix.h5")
+CCl4_recovery_1_oliveoil_4_0 = Read10X_h5("/hpc/grid/wip_cmg_systems-immunology/kravak/10x_data/lustre/workspace/projects/IIRU/SCS/10x_data/190130_NB500876_0286_AH22N2BGX5/11302018_CCl4_recovery_1_oliveoil_4_0/outs/filtered_feature_bc_matrix.h5")
 ```
+
+Take advantage of Kellie's tidy, piped code to run the recovery files through SCTransform
+```{r}
+CCl4_recovery_3_C57B16_CCl4_4_2wk = suppressWarnings(CCl4_recovery_3_C57B16_CCl4_4_2wk[!duplicated(row.names(CCl4_recovery_3_C57B16_CCl4_4_2wk)),] %>% CreateSeuratObject(project = "CCl4_recovery_3_C57B16_CCl4_4_2wk") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+CCl4_recovery_5_Balbc_CCl4_4_0wk = suppressWarnings(CCl4_recovery_5_Balbc_CCl4_4_0wk[!duplicated(row.names(CCl4_recovery_5_Balbc_CCl4_4_0wk)),] %>% CreateSeuratObject(project = "CCl4_recovery_5_Balbc_CCl4_4_0wk") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+CCl4_recovery_6_Balbc_CCl4_4_0wk = suppressWarnings(CCl4_recovery_6_Balbc_CCl4_4_0wk[!duplicated(row.names(CCl4_recovery_6_Balbc_CCl4_4_0wk)),] %>% CreateSeuratObject(project = "CCl4_recovery_6_Balbc_CCl4_4_0wk") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+CCl4_recovery_2_C57B16_CCl4_4_1wk = suppressWarnings(CCl4_recovery_2_C57B16_CCl4_4_1wk[!duplicated(row.names(CCl4_recovery_2_C57B16_CCl4_4_1wk)),] %>% CreateSeuratObject(project = "CCl4_recovery_2_C57B16_CCl4_4_1wk") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+CCl4_recovery_1_C57B16_CCl4_4_0wk = suppressWarnings(CCl4_recovery_1_C57B16_CCl4_4_0wk[!duplicated(row.names(CCl4_recovery_1_C57B16_CCl4_4_0wk)),] %>% CreateSeuratObject(project = "CCl4_recovery_1_C57B16_CCl4_4_0wk") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+CCl4_recovery_4_C57B16_CCl4_4_4wk = suppressWarnings(CCl4_recovery_4_C57B16_CCl4_4_4wk[!duplicated(row.names(CCl4_recovery_4_C57B16_CCl4_4_4wk)),] %>% CreateSeuratObject(project = "CCl4_recovery_4_C57B16_CCl4_4_4wk") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+CCl4_recovery_1_oliveoil_4_0 = suppressWarnings(CCl4_recovery_1_oliveoil_4_0[!duplicated(row.names(CCl4_recovery_1_oliveoil_4_0)),] %>% CreateSeuratObject(project = "CCl4_recovery_1_oliveoil_4_0") %>% NormalizeData %>% SCTransform(verbose = FALSE))
+```
+Adding regression time points into the original sample list
+```{r}
+sample.list = c(sample.list, CCl4_recovery_3_C57B16_CCl4_4_2wk, CCl4_recovery_5_Balbc_CCl4_4_0wk, CCl4_recovery_6_Balbc_CCl4_4_0wk, CCl4_recovery_2_C57B16_CCl4_4_1wk, CCl4_recovery_1_C57B16_CCl4_4_0wk, CCl4_recovery_4_C57B16_CCl4_4_4wk, CCl4_recovery_1_oliveoil_4_0)
+names(sample.list) = c("AMLN$AMLN", "AMLN$ND", "CCl4_1$CCl4", "CCl4_1$Naive", "CCl4_2$`Niave-2`", "CCl4_2$`CCl4-2`", "CCl4_recovery_3_C57B16_CCl4_4_2wk", "CCl4_recovery_5_Balbc_CCl4_4_0wk", "CCl4_recovery_6_Balbc_CCl4_4_0wk", "CCl4_recovery_2_C57B16_CCl4_4_1wk", "CCl4_recovery_1_C57B16_CCl4_4_0wk", "CCl4_recovery_4_C57B16_CCl4_4_4wk", "CCl4_recovery_1_oliveoil_4_0")
+```
+
+```{r}
+saveRDS(sample.list, "/hpc/grid/wip_cmg_systems-immunology/abarron/sample.list.rds")
+```
+
 
 ## R Markdown
 
