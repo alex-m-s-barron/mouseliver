@@ -1,0 +1,1589 @@
+---
+title: "mouse_liver_clustering"
+author: "Alex Barron"
+date: "11/25/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+set additional libpath
+```{r}
+libpath <-"/sbgenomics/workspace/rpkgs"
+.libPaths(libpath)
+```
+load/install packages
+```{r}
+library(Seurat)
+library(clustree)
+library(harmony)
+library(future)
+library(cowplot)
+library(ggplot2)
+library(dplyr)
+library(viridis, verbose = F)
+library(patchwork, verbose = F)
+library(sctransform, verbose = F)
+library(loomR)
+library(biomaRt)
+library(SeuratWrappers)
+library(velocyto.R)
+library(sctransform)
+options(future.globals.maxSize= 3000000000000*1024^10)
+```
+Read in chow (sample 1), GAN isotype (sample 2) and GAN anti-TGFb (sample 3) from XC43. 
+```{r}
+setwd("/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper")
+sample1 <- Read10X("XC43_1/outs/filtered_feature_bc_matrix")
+sample2 <- Read10X("XC43_2/outs/filtered_feature_bc_matrix")
+sample3 <- Read10X("XC43_3/outs/filtered_feature_bc_matrix")
+
+Sample1 <- CreateSeuratObject(sample1$`Gene Expression`)
+Sample2 <- CreateSeuratObject(sample2$`Gene Expression`)
+Sample3 <- CreateSeuratObject(sample3$`Gene Expression`)
+
+Sample1[['HTO']] <- CreateAssayObject(sample1$Custom[c(1:4),])
+Sample2[['HTO']] <- CreateAssayObject(sample2$Custom)
+Sample3[['HTO']] <- CreateAssayObject(sample3$Custom)
+```
+Read in files processed with velocyto via the command line to generate spliced/unspliced count matrices
+```{r}
+library(SeuratWrappers)
+library(velocyto.R)
+#XC43
+XC43_1_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC43_1.loom")
+XC43_2_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC43_2.loom")
+XC43_3_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC43_3.loom")
+```
+Merge velocyto objects with Seurat objects
+```{r}
+#XC43_1
+ldat<-XC43_1_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(Sample1)]
+  
+  ### Add assay to Seurat object
+  Sample1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC43_2
+ldat<-XC43_2_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(Sample2)]
+  
+  ### Add assay to Seurat object
+  Sample2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC43_3
+ldat<-XC43_3_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(Sample3)]
+  
+  ### Add assay to Seurat object
+  Sample3[[i]] <- CreateAssayObject(counts = assay)
+}
+```
+Normalize & scale HTO data, run Seurat demultiplexing algorithm
+```{r}
+Sample1 <- NormalizeData(Sample1, assay = "HTO", normalization.method = "CLR") %>% ScaleData(assay = "HTO")
+Sample2 <- NormalizeData(Sample2, assay = "HTO", normalization.method = "CLR") %>% ScaleData(assay = "HTO")
+Sample3 <- NormalizeData(Sample3, assay = "HTO", normalization.method = "CLR") %>% ScaleData(assay = "HTO")
+Sample1 <- HTODemux(Sample1, assay = "HTO", positive.quantile = 0.99)
+Sample2 <- HTODemux(Sample2, assay = "HTO", positive.quantile = 0.99)
+Sample3 <- HTODemux(Sample3, assay = "HTO", positive.quantile = 0.99)
+```
+View cell assignments
+```{r}
+table(Sample1$HTO_classification.global)
+table(Sample2$HTO_classification.global)
+table(Sample3$HTO_classification.global)
+```
+Visualize cells by tSNE
+```{r}
+# Calculate a tSNE embedding of the HTO data for Sample1
+DefaultAssay(Sample1) <- "HTO"
+Sample1 <- ScaleData(Sample1, features = rownames(Sample1), 
+    verbose = FALSE)
+Sample1 <- RunPCA(Sample1, features = rownames(Sample1), approx = FALSE)
+Sample1 <- RunTSNE(Sample1, dims = 1:8, perplexity = 100, check_duplicates = F)
+DimPlot(Sample1)
+
+# Calculate a tSNE embedding of the HTO data for Sample2
+DefaultAssay(Sample2) <- "HTO"
+Sample2 <- ScaleData(Sample2, features = rownames(Sample2), 
+    verbose = FALSE)
+Sample2 <- RunPCA(Sample2, features = rownames(Sample2), approx = FALSE)
+Sample2 <- RunTSNE(Sample2, dims = 1:8, perplexity = 100, check_duplicates = F)
+DimPlot(Sample2)
+
+# Calculate a tSNE embedding of the HTO data for Sample3
+DefaultAssay(Sample3) <- "HTO"
+Sample3 <- ScaleData(Sample3, features = rownames(Sample3), 
+    verbose = FALSE)
+Sample3 <- RunPCA(Sample3, features = rownames(Sample3), approx = FALSE)
+Sample3 <- RunTSNE(Sample3, dims = 1:8, perplexity = 100, check_duplicates = F)
+DimPlot(Sample3)
+```
+Associate sample and replicate identities
+```{r}
+Sample1$sample <- "XC43_chow"
+paste("XC43_chow", Sample1$HTO_maxID, sep = "_") -> Sample1$replicate
+Sample2$sample <- "XC43_GAN"
+paste("XC43_GAN", Sample2$HTO_maxID, sep = "_") -> Sample2$replicate
+Sample3$sample <- "XC43_GAN_TGF"
+paste("XC43_GAN_TGF", Sample3$HTO_maxID, sep = "_") -> Sample3$replicate
+```
+Extract singlets from XC43
+```{r}
+#Sample1
+Idents(Sample1) <- "HTO_classification.global"
+Sample1 <- subset(Sample1, idents = "Singlet")
+#Sample2
+Idents(Sample2) <- "HTO_classification.global"
+Sample2 <- subset(Sample2, idents = "Singlet")
+#Sample3
+Idents(Sample3) <- "HTO_classification.global"
+Sample3 <- subset(Sample3, idents = "Singlet")
+```
+Add in XC24 GAN samples
+```{r}
+XC24_GAN1.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample1/filtered_feature_bc_matrix")
+XC24_GAN2.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample2/filtered_feature_bc_matrix")
+XC24_GAN3.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample3/filtered_feature_bc_matrix")
+XC24_GAN_TGF1.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample4/filtered_feature_bc_matrix")
+XC24_GAN_TGF2.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample5/filtered_feature_bc_matrix")
+XC24_GAN_TGF3.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample6/filtered_feature_bc_matrix")
+XC24_chow1.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample10/filtered_feature_bc_matrix")
+XC24_chow2.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample11/filtered_feature_bc_matrix")
+XC24_chow3.counts <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC24_liver3/sample12/filtered_feature_bc_matrix")
+```
+Create Seurat Objects for XC24
+```{r}
+XC24_GAN1 <- CreateSeuratObject(XC24_GAN1.counts)
+XC24_GAN2 <- CreateSeuratObject(XC24_GAN2.counts)
+XC24_GAN3 <- CreateSeuratObject(XC24_GAN3.counts)
+XC24_GAN_TGF1 <- CreateSeuratObject(XC24_GAN_TGF1.counts)
+XC24_GAN_TGF2 <- CreateSeuratObject(XC24_GAN_TGF2.counts)
+XC24_GAN_TGF3 <- CreateSeuratObject(XC24_GAN_TGF3.counts)
+XC24_chow1 <- CreateSeuratObject(XC24_chow1.counts)
+XC24_chow2 <- CreateSeuratObject(XC24_chow2.counts)
+XC24_chow3 <- CreateSeuratObject(XC24_chow3.counts)
+```
+Read in files processed with velocyto via the command line to generate spliced/unspliced count matrices
+```{r}
+#XC24
+XC24_1_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_1.loom")
+XC24_2_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_2.loom")
+XC24_3_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_3.loom")
+XC24_4_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_4.loom")
+XC24_5_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_5.loom")
+XC24_6_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_6.loom")
+XC24_10_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_10.loom")
+XC24_11_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_11.loom")
+XC24_12_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC24_12.loom")
+```
+Merge velocyto objects with XC24 Seurat objects
+```{r}
+#XC24_1
+ldat<-XC24_1_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_GAN1)]
+  
+  ### Add assay to Seurat object
+  XC24_GAN1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_2
+ldat<-XC24_2_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_GAN2)]
+  
+  ### Add assay to Seurat object
+  XC24_GAN2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_3
+ldat<-XC24_3_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_GAN3)]
+  
+  ### Add assay to Seurat object
+  XC24_GAN3[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_4
+ldat<-XC24_4_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_GAN_TGF1)]
+  
+  ### Add assay to Seurat object
+  XC24_GAN_TGF1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_5
+ldat<-XC24_5_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_GAN_TGF2)]
+  
+  ### Add assay to Seurat object
+  XC24_GAN_TGF2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_6
+ldat<-XC24_6_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_GAN_TGF3)]
+  
+  ### Add assay to Seurat object
+  XC24_GAN_TGF3[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_10
+ldat<-XC24_10_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_chow1)]
+  
+  ### Add assay to Seurat object
+  XC24_chow1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_11
+ldat<-XC24_11_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_chow2)]
+  
+  ### Add assay to Seurat object
+  XC24_chow2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC24_12
+ldat<-XC24_12_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC24_chow3)]
+  
+  ### Add assay to Seurat object
+  XC24_chow3[[i]] <- CreateAssayObject(counts = assay)
+}
+```
+Associate sample and replicate identities
+```{r}
+XC24_GAN1$sample <- "XC24_GAN"
+XC24_GAN2$sample <- "XC24_GAN"
+XC24_GAN3$sample <- "XC24_GAN"
+XC24_GAN1$replicate <- "XC24_GAN1"
+XC24_GAN2$replicate <- "XC24_GAN2"
+XC24_GAN3$replicate <- "XC24_GAN3"
+XC24_GAN_TGF1$sample <- "XC24_GAN_TGF"
+XC24_GAN_TGF2$sample <- "XC24_GAN_TGF"
+XC24_GAN_TGF3$sample <- "XC24_GAN_TGF"
+XC24_GAN_TGF1$replicate <- "XC24_GAN_TGF1"
+XC24_GAN_TGF2$replicate <- "XC24_GAN_TGF2"
+XC24_GAN_TGF3$replicate <- "XC24_GAN_TGF3"
+XC24_chow1$sample <- "XC24_chow"
+XC24_chow2$sample <- "XC24_chow"
+XC24_chow3$sample <- "XC24_chow"
+XC24_chow1$replicate <- "XC24_chow1"
+XC24_chow2$replicate <- "XC24_chow2"
+XC24_chow3$replicate <- "XC24_chow3"
+```
+Add in 2018 CCl4 experiments
+```{r}
+CCl4 = UpdateSeuratObject(readRDS("/hpc/grid/wip_cmg_systems-immunology/kravak/CCl4immunophenotyping/SCS/CCl4_seurat2Obj.rds"))
+CCl4 = SplitObject(object = CCl4, split.by = "sample")
+CCl4_1 = as.matrix(GetAssayData(CCl4$CCl4, slot = "counts"))
+CCl4_2 = as.matrix(GetAssayData(CCl4$`CCl4-2`, slot = "counts"))
+CCl4_ctrl1 = as.matrix(GetAssayData(CCl4$Naive, slot = "counts"))
+CCl4_ctrl2 = as.matrix(GetAssayData(CCl4$`Niave-2`, slot = "counts"))
+CCl4_1<-suppressWarnings(CCl4_1[!duplicated(row.names(CCl4_1)),] %>% CreateSeuratObject())
+CCl4_2<-suppressWarnings(CCl4_2[!duplicated(row.names(CCl4_2)),] %>% CreateSeuratObject())
+CCl4_ctrl1<-suppressWarnings(CCl4_ctrl1[!duplicated(row.names(CCl4_ctrl1)),] %>% CreateSeuratObject())
+CCl4_ctrl2<-suppressWarnings(CCl4_ctrl2[!duplicated(row.names(CCl4_ctrl2)),] %>% CreateSeuratObject())
+```
+Read in files processed with velocyto via the command line to generate spliced/unspliced count matrices
+```{r}
+#CCl4
+CCl4_1_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/CCl4_June2018.loom")
+CCl4_ctrl1_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/Olive_June2018.loom")
+CCl4_2_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/CCl4_August2018.loom")
+CCl4_ctrl2_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/Olive_August2018.loom")
+```
+Merge velocyto objects with XC24 Seurat objects
+```{r}
+#CCl4_1
+ldat<-CCl4_1_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", 'CCl4_', colnames(assay))
+  colnames(assay) <- gsub("x", '-1', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(CCl4_1)]
+  
+  ### Add assay to Seurat object
+  CCl4_1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#CCl4_ctrl1
+ldat<-CCl4_ctrl1_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", 'Naive_', colnames(assay))
+  colnames(assay) <- gsub("x", '-1', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(CCl4_ctrl1)]
+  
+  ### Add assay to Seurat object
+  CCl4_ctrl1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#CCl4_2
+ldat<-CCl4_2_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", 'C2_CCl4_', colnames(assay))
+  colnames(assay) <- gsub("x", '-1', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(CCl4_2)]
+  
+  ### Add assay to Seurat object
+  CCl4_2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#CCl4_ctrl2
+ldat<-CCl4_ctrl2_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", 'N2_Naive_', colnames(assay))
+  colnames(assay) <- gsub("x", '-1', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(CCl4_ctrl2)]
+  
+  ### Add assay to Seurat object
+  CCl4_ctrl2[[i]] <- CreateAssayObject(counts = assay)
+}
+```
+Associate replicate identities:
+```{r}
+CCl4_1$sample <- "CCl4_1"
+CCl4_1$replicate <- "CCl4_1"
+CCl4_2$sample <- "CCl4_2"
+CCl4_2$replicate <- "CCl4_2"
+CCl4_ctrl1$sample <- "CCl4_ctrl1"
+CCl4_ctrl1$replicate <- "CCl4_ctrl1"
+CCl4_ctrl2$sample <- "CCl4_ctrl2"
+CCl4_ctrl2$replicate <- "CCl4_ctrl2"
+```
+Read in peak CCl4 MMPsense data:
+```{r}
+OliveMMPNeg.count <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC32_liver33_PBMC_signature/XC32_liver/OliveMMPNeg/filtered_feature_bc_matrix")
+OliveMMPPos.count <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC32_liver33_PBMC_signature/XC32_liver/OliveMMPPos/filtered_feature_bc_matrix")
+CCL4MMPNeg.count <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC32_liver33_PBMC_signature/XC32_liver/CCL4MMPNeg/filtered_feature_bc_matrix")
+CCL4MMPPos.count <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC32_liver33_PBMC_signature/XC32_liver/CCL4MMPPos/filtered_feature_bc_matrix")
+```
+Create seurat object to contain count data for MMPsense experiment and assay object to contain hash data:
+```{r}
+OliveMMPNeg <- CreateSeuratObject(OliveMMPNeg.count$`Gene Expression`)
+OliveMMPPos <- CreateSeuratObject(OliveMMPPos.count$`Gene Expression`)
+CCL4MMPPos <- CreateSeuratObject(CCL4MMPPos.count$`Gene Expression`)
+CCL4MMPNeg <- CreateSeuratObject(CCL4MMPNeg.count$`Gene Expression`)
+OliveMMPNeg[["hash"]] <- CreateAssayObject(OliveMMPNeg.count$Custom)
+OliveMMPPos[["hash"]] <- CreateAssayObject(OliveMMPPos.count$Custom)
+CCL4MMPNeg[["hash"]] <- CreateAssayObject(CCL4MMPNeg.count$Custom)
+CCL4MMPPos[["hash"]] <- CreateAssayObject(CCL4MMPPos.count$Custom)
+```
+Read in files processed with velocyto via the command line to generate spliced/unspliced count matrices
+```{r}
+#MMPsense
+CCl4_MMPneg_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/CCL4MMPNeg.loom")
+CCl4_MMPpos_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/CCL4MMPPos.loom")
+Olive_MMPneg_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/OliveMMPNeg.loom")
+Olive_MMPpos_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/OliveMMPPos.loom")
+```
+Merge velocyto objects with XC24 Seurat objects
+```{r}
+#CCl4_MMPneg_velo
+ldat<-CCl4_MMPneg_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(CCL4MMPNeg)]
+  
+  ### Add assay to Seurat object
+  CCL4MMPNeg[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#CCl4_MMPpos_velo
+ldat<-CCl4_MMPpos_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(CCL4MMPPos)]
+  
+  ### Add assay to Seurat object
+  CCL4MMPPos[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#Olive_MMPneg_velo
+ldat<-Olive_MMPneg_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(OliveMMPNeg)]
+  
+  ### Add assay to Seurat object
+  OliveMMPNeg[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#Olive_MMPpos_velo
+ldat<-Olive_MMPpos_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(OliveMMPPos)]
+  
+  ### Add assay to Seurat object
+  OliveMMPPos[[i]] <- CreateAssayObject(counts = assay)
+}
+```
+Associate sample names:
+```{r}
+OliveMMPNeg$sample <- "OliveMMPNeg"
+OliveMMPPos$sample <- "OliveMMPPos"
+CCL4MMPNeg$sample <- "CCL4MMPNeg"
+CCL4MMPPos$sample <- "CCL4MMPPos"
+```
+Cluster the hash data:
+```{r}
+#cluster on hash
+DefaultAssay(OliveMMPNeg) <- "hash"
+OliveMMPNeg <- NormalizeData(OliveMMPNeg, assay = "hash", normalization.method = "CLR") %>% ScaleData(assay = "hash")
+OliveMMPNeg <- RunPCA(OliveMMPNeg, features = rownames(OliveMMPNeg), reduction.name = "pca_hash", reduction.key = "pca_hash_", verbose = FALSE)
+DimPlot(OliveMMPNeg, reduction = "pca_hash")
+OliveMMPNeg_hash.data <- GetAssayData(OliveMMPNeg, slot = "data")
+OliveMMPNeg.hash.dist <- dist(t(OliveMMPNeg_hash.data))
+OliveMMPNeg[["tsne_hash"]] <- RunTSNE(OliveMMPNeg.hash.dist, assay = "hash", reduction.key = "hashTSNE_")
+OliveMMPNeg[["hash_snn"]] <- FindNeighbors(OliveMMPNeg.hash.dist)$snn
+OliveMMPNeg <- FindClusters(OliveMMPNeg, resolution = 0.5, graph.name = "hash_snn")
+DimPlot(OliveMMPNeg, label = T)
+FeaturePlot(OliveMMPNeg, features = c("hash1", "hash3", "hash5"))
+```
+Identify hashed replicates in olive oil-treated MMPsense negative cells:
+```{r}
+OliveMMPNeg <- RenameIdents(OliveMMPNeg, `0` = "OliveMMPNeg_R3", `1` = "OliveMMPNeg_R1", `2` = "OliveMMPNeg_R3", 
+    `3` = "OliveMMPNeg_R3", `4` = "OliveMMPNeg_R1", `5` = "OliveMMPNeg_R3", `6` = "OliveMMPNeg_R2", `7` = "OliveMMPNeg_R1", `8` = "OliveMMPNeg_R3", `9` = "OliveMMPNeg_R2", `10` = "OliveMMPNeg_R1", `11` = "OliveMMPNeg_R1", `12` = "OliveMMPNeg_R2",  `13` = "OliveMMPNeg_R3", `14` = "OliveMMPNeg_R2", `15` = "OliveMMPNeg_R3", `16` = "OliveMMPNeg_R2", `17`="multiplets", `18` = "OliveMMPNeg_R1", `19` = "multiplets", `20` = "multiplets", `21` = "OliveMMPNeg_R3")
+Idents(OliveMMPNeg) -> OliveMMPNeg$replicate
+OliveMMPNeg.singlet <- subset(OliveMMPNeg, idents = "multiplets", invert = T)
+DimPlot(OliveMMPNeg.singlet, label = TRUE) + NoLegend()
+```
+Repeat hash clustering for olive-oil-treated MMPsense positive cells:
+```{r}
+#cluster on hash
+DefaultAssay(OliveMMPPos) <- "hash"
+OliveMMPPos <- NormalizeData(OliveMMPPos, assay = "hash", normalization.method = "CLR") %>% ScaleData(assay = "hash")
+OliveMMPPos <- RunPCA(OliveMMPPos, features = rownames(OliveMMPPos), reduction.name = "pca_hash", reduction.key = "pca_hash_", verbose = FALSE)
+DimPlot(OliveMMPPos, reduction = "pca_hash")
+OliveMMPPos_hash.data <- GetAssayData(OliveMMPPos, slot = "data")
+OliveMMPPos.hash.dist <- dist(t(OliveMMPPos_hash.data))
+OliveMMPPos[["tsne_hash"]] <- RunTSNE(OliveMMPPos.hash.dist, assay = "hash", reduction.key = "hashTSNE_")
+OliveMMPPos[["hash_snn"]] <- FindNeighbors(OliveMMPPos.hash.dist)$snn
+OliveMMPPos <- FindClusters(OliveMMPPos, resolution = 0.1, graph.name = "hash_snn")
+DimPlot(OliveMMPPos, label = T)
+FeaturePlot(OliveMMPPos, features = c("hash2", "hash4", "hash6"))
+```
+Identify replicates in olive-oil-treated MMPsense positive cells:
+```{r}
+OliveMMPPos <- RenameIdents(OliveMMPPos, `0` = "OliveMMPPos_R3", `1` = "OliveMMPPos_R3", `2` = "OliveMMPPos_R1", `3` = "OliveMMPPos_R2")
+Idents(OliveMMPPos) -> OliveMMPPos$replicate
+DimPlot(OliveMMPPos, label = TRUE) + NoLegend()
+```
+Repeat hash clustering for CCl4-treated MMPsense negative cells:
+```{r}
+#cluster on hash
+DefaultAssay(CCL4MMPNeg) <- "hash"
+CCL4MMPNeg <- NormalizeData(CCL4MMPNeg, assay = "hash", normalization.method = "CLR") %>% ScaleData(assay = "hash")
+CCL4MMPNeg <- RunPCA(CCL4MMPNeg, features = rownames(CCL4MMPNeg), reduction.name = "pca_hash", reduction.key = "pca_hash_", verbose = FALSE)
+DimPlot(CCL4MMPNeg, reduction = "pca_hash")
+CCL4MMPNeg_hash.data <- GetAssayData(CCL4MMPNeg, slot = "data")
+CCL4MMPNeg.hash.dist <- dist(t(CCL4MMPNeg_hash.data))
+CCL4MMPNeg[["tsne_hash"]] <- RunTSNE(CCL4MMPNeg.hash.dist, assay = "hash", reduction.key = "hashTSNE_")
+CCL4MMPNeg[["hash_snn"]] <- FindNeighbors(CCL4MMPNeg.hash.dist)$snn
+CCL4MMPNeg <- FindClusters(CCL4MMPNeg, resolution = 0.5, graph.name = "hash_snn")
+DimPlot(CCL4MMPNeg, label = T)
+FeaturePlot(CCL4MMPNeg, features = c("hash7", "hash9", "hash11"))
+```
+Identify replicates in CCl4-treated MMPsense negative cells:
+```{r}
+CCL4MMPNeg <- RenameIdents(CCL4MMPNeg, `0` = "multiplets", `1` = "multiplets", `2` = "multiplets", 
+    `3` = "CCL4MMPNeg_R1", `4` = "CCL4MMPNeg_R3", `5` = "CCL4MMPNeg_R2", `6` = "CCL4MMPNeg_R2", `7` = "CCL4MMPNeg_R1", `8` = "CCL4MMPNeg_R1", `9` = "CCL4MMPNeg_R1", `10` = "CCL4MMPNeg_R3", `11` = "CCL4MMPNeg_R3", `12` = "CCL4MMPNeg_R1",  `13` = "CCL4MMPNeg_R2", `14` = "CCL4MMPNeg_R3", `15` = "CCL4MMPNeg_R2", `16` = "CCL4MMPNeg_R3", `17`="CCL4MMPNeg_R3", `18` = "CCL4MMPNeg_R1", `19` = "CCL4MMPNeg_R2", `20` = "CCL4MMPNeg_R2", `21` = "CCL4MMPNeg_R3", `22` = "CCL4MMPNeg_R1", `23` = "CCL4MMPNeg_R1", `24`= "CCL4MMPNeg_R1", `25` = "CCL4MMPNeg_R2", `26` = "CCL4MMPNeg_R3", `27` = "CCL4MMPNeg_R1", `28` = "CCL4MMPNeg_R2", `29` = "CCL4MMPNeg_R1", `30` ="CCL4MMPNeg_R2", `31`="CCL4MMPNeg_R3", `32` = "CCL4MMPNeg_R1", `33` = "CCL4MMPNeg_R1", `34` = "CCL4MMPNeg_R2", `35`="CCL4MMPNeg_R3")
+Idents(CCL4MMPNeg) -> CCL4MMPNeg$replicate
+CCL4MMPNeg.singlet <- subset(CCL4MMPNeg, idents = "multiplets", invert = T)
+DimPlot(CCL4MMPNeg.singlet, label = TRUE) + NoLegend()
+```
+Repeat hash clustering with CCl4-treated MMPsense positive cells:
+```{r}
+#cluster on hash
+DefaultAssay(CCL4MMPPos) <- "hash"
+CCL4MMPPos <- NormalizeData(CCL4MMPPos, assay = "hash", normalization.method = "CLR") %>% ScaleData(assay = "hash")
+CCL4MMPPos <- RunPCA(CCL4MMPPos, features = rownames(CCL4MMPPos), reduction.name = "pca_hash", reduction.key = "pca_hash_", verbose = FALSE)
+DimPlot(CCL4MMPPos, reduction = "pca_hash")
+CCL4MMPPos_hash.data <- GetAssayData(CCL4MMPPos, slot = "data")
+CCL4MMPPos.hash.dist <- dist(t(CCL4MMPPos_hash.data))
+CCL4MMPPos[["tsne_hash"]] <- RunTSNE(CCL4MMPPos.hash.dist, assay = "hash", reduction.key = "hashTSNE_")
+CCL4MMPPos[["hash_snn"]] <- FindNeighbors(CCL4MMPPos.hash.dist)$snn
+CCL4MMPPos <- FindClusters(CCL4MMPPos, resolution = 0.1, graph.name = "hash_snn")
+DimPlot(CCL4MMPPos, label = T)
+FeaturePlot(CCL4MMPPos, features = c("hash8", "hash10", "hash12"))
+```
+Identify replicates in CCl4-treated MMPsense positive cells:
+```{r}
+CCL4MMPPos <- RenameIdents(CCL4MMPPos, `0` = "CCL4MMPPos_R1", `1` = "CCL4MMPPos_R2", `2` = "CCL4MMPPos_R3",  `3` = "CCL4MMPPos_R1")
+Idents(CCL4MMPPos) -> CCL4MMPPos$replicate
+DimPlot(CCL4MMPPos, label = TRUE) + NoLegend()
+```
+Start by reading in longitudinal data from XC23:
+```{r}
+XC23_GAN40wk_ctrl1 <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC23_liver/sample3/filtered_feature_bc_matrix")
+XC23_GAN40wk_ctrl2 <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC23_liver/sample4/filtered_feature_bc_matrix")
+XC23_GAN40wk_ctrl3 <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC23_liver/sample5/filtered_feature_bc_matrix")
+XC23_GAN40wk_1 <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC23_liver/sample6/filtered_feature_bc_matrix")
+XC23_GAN40wk_2 <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC23_liver/sample7/filtered_feature_bc_matrix")
+XC23_GAN40wk_3 <- Read10X("/hpc/grid/wip_cmg_systems-immunology/Xiao/XC23_liver/sample8/filtered_feature_bc_matrix")
+```
+Create Seurat objects for longitudinal GAN data:
+```{r}
+XC23_GAN40wk_ctrl1 <- CreateSeuratObject(XC23_GAN40wk_ctrl1)
+XC23_GAN40wk_ctrl2 <- CreateSeuratObject(XC23_GAN40wk_ctrl2)
+XC23_GAN40wk_ctrl3 <- CreateSeuratObject(XC23_GAN40wk_ctrl3)
+XC23_GAN40wk_1 <- CreateSeuratObject(XC23_GAN40wk_1)
+XC23_GAN40wk_2 <- CreateSeuratObject(XC23_GAN40wk_2)
+XC23_GAN40wk_3 <- CreateSeuratObject(XC23_GAN40wk_3)
+```
+Read in files processed with velocyto via the command line to generate spliced/unspliced count matrices
+```{r}
+XC23_GAN40wk_ctrl1_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC23_sample3.loom")
+XC23_GAN40wk_ctrl2_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC23_sample4.loom")
+XC23_GAN40wk_ctrl3_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC23_sample5.loom")
+XC23_GAN40wk_1_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC23_sample6.loom")
+XC23_GAN40wk_2_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC23_sample7.loom")
+XC23_GAN40wk_3_velo <- ReadVelocity(file = "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/raw_velocity_data/XC23_sample8.loom")
+```
+Merge velocyto objects with Seurat objects
+```{r}
+#XC23_GAN40wk_1
+ldat<-XC23_GAN40wk_1_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC23_GAN40wk_1)]
+  
+  ### Add assay to Seurat object
+  XC23_GAN40wk_1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC23_GAN40wk_2
+ldat<-XC23_GAN40wk_2_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC23_GAN40wk_2)]
+  
+  ### Add assay to Seurat object
+  XC23_GAN40wk_2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC23_GAN40wk_3
+ldat<-XC23_GAN40wk_3_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC23_GAN40wk_3)]
+  
+  ### Add assay to Seurat object
+  XC23_GAN40wk_3[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC23_GAN40wk_ctrl1
+ldat<-XC23_GAN40wk_ctrl1_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC23_GAN40wk_ctrl1)]
+  
+  ### Add assay to Seurat object
+  XC23_GAN40wk_ctrl1[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC23_GAN40wk_ctrl2
+ldat<-XC23_GAN40wk_ctrl2_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC23_GAN40wk_ctrl2)]
+  
+  ### Add assay to Seurat object
+  XC23_GAN40wk_ctrl2[[i]] <- CreateAssayObject(counts = assay)
+}
+
+#XC23_GAN40wk_ctrl3
+ldat<-XC23_GAN40wk_ctrl3_velo
+for (i in names(x = ldat)) {
+  ### Store assay in a new variable
+  assay <- ldat[[i]]
+  
+  ### Rename cell names in loom file to match cell names in Seurat object
+  colnames(assay) <- gsub(".*:", '', colnames(assay))
+  colnames(assay) <- gsub("x", '', colnames(assay))
+  
+  ### Subset to filtered cells in Seurat object
+  assay <- assay[,colnames(XC23_GAN40wk_ctrl3)]
+  
+  ### Add assay to Seurat object
+  XC23_GAN40wk_ctrl3[[i]] <- CreateAssayObject(counts = assay)
+}
+```
+Associate replicate and sample identities:
+```{r}
+XC23_GAN40wk_ctrl1$replicate <- "XC23_GAN40wk_ctrl1"
+XC23_GAN40wk_ctrl2$replicate <- "XC23_GAN40wk_ctrl2"
+XC23_GAN40wk_ctrl3$replicate <- "XC23_GAN40wk_ctrl3"
+XC23_GAN40wk_1$replicate <- "XC23_GAN40wk_1"
+XC23_GAN40wk_2$replicate <- "XC23_GAN40wk_2"
+XC23_GAN40wk_3$replicate <- "XC23_GAN40wk_3"
+XC23_GAN40wk_ctrl1$sample <- "XC23_GAN40wk_ctrl"
+XC23_GAN40wk_ctrl2$sample <- "XC23_GAN40wk_ctrl"
+XC23_GAN40wk_ctrl3$sample <- "XC23_GAN40wk_ctrl"
+XC23_GAN40wk_1$sample <- "XC23_GAN40wk"
+XC23_GAN40wk_2$sample <- "XC23_GAN40wk"
+XC23_GAN40wk_3$sample <- "XC23_GAN40wk"
+```
+Create object/sample list:
+```{r}
+ob.list <- merge(Sample1, y = c(Sample2, Sample3, Sample6, XC24_GAN1, XC24_GAN2, XC24_GAN3, XC24_GAN_TGF1, XC24_GAN_TGF2, XC24_GAN_TGF3, XC24_chow1, XC24_chow2, XC24_chow3, CCl4_1, CCl4_2, CCl4_ctrl1, CCl4_ctrl2, OliveMMPNeg.singlet, OliveMMPPos, CCL4MMPNeg.singlet, CCL4MMPPos, XC23_GAN40wk_3, XC23_GAN40wk_2, XC23_GAN40wk_1, XC23_GAN40wk_ctrl3, XC23_GAN40wk_ctrl2, XC23_GAN40wk_ctrl1), add.cell.ids = c("Sample1", "Sample2", "Sample3", "Sample6", "XC24_GAN1", "XC24_GAN2", "XC24_GAN3", "XC24_GAN_TGF1", "XC24_GAN_TGF2", "XC24_GAN_TGF3", "XC24_chow1", "XC24_chow2", "XC24_chow3", "CCl4_1", "CCl4_2", "CCl4_ctrl1", "CCl4_ctrl2", "OliveMMPNeg", "OliveMMPPos", "CCL4MMPNeg", "CCL4MMPPos", "XC23_GAN40wk_3", "XC23_GAN40wk_2", "XC23_GAN40wk_1", "XC23_GAN40wk_ctrl3", "XC23_GAN40wk_ctrl2", "XC23_GAN40wk_ctrl1"), project = "SAMac_paper")
+ob.list.all<-ob.list
+DefaultAssay(ob.list.all)<-"RNA"
+```
+Create batch identities to use for integration
+```{r}
+ob.list.all$batch<-ob.list.all$sample
+Idents(ob.list.all)<-ob.list.all$batch
+ob.list.all<-RenameIdents(ob.list.all, 
+                      "CCl4_ctrl1"="CCl4_1",
+                      "CCl4_ctrl2"="CCl4_2",
+                      "CCL4MMPNeg"="MMPsense",
+                      "CCL4MMPPos"="MMPsense",
+                      "OliveMMPNeg"="MMPsense",
+                      "OliveMMPPos"="MMPsense",
+                      "XC24_chow"="XC24",
+                      "XC24_GAN"="XC24",
+                      "XC24_GAN_TGF"="XC24",
+                      "XC43_chow"="XC43",
+                      "XC43_GAN"="XC43",
+                      "XC43_GAN_TGF"="XC43",
+                      "XC23_GAN40wk"="XC23", 
+                      "XC23_GAN40wk"="XC23", 
+                      "XC23_GAN40wk"="XC23", 
+                      "XC23_GAN40wk_ctrl"="XC23", 
+                      "XC23_GAN40wk_ctrl"="XC23", 
+                      "XC23_GAN40wk_ctrl"="XC23")
+Idents(ob.list.all)->ob.list.all$batch
+```
+Create percent.mt and percent.rp[ls] feature sets
+```{r}
+ob.list.all[["percent.mt"]] <- PercentageFeatureSet(ob.list.all, pattern = "^mt-", assay = "RNA")
+ob.list.all[["percent.rpl"]] <- PercentageFeatureSet(ob.list.all, pattern = "^Rp[sl]", assay = "RNA")
+```
+Export merged object list:
+```{r}
+saveRDS(ob.list.all, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/ob_list_all.rds")
+```
+Looking at the basic % mt, count and feature plots shows considerable variation in data quality across data sets:
+```{r,fig.width=20}
+Idents(ob.list.all) <- ob.list$replicate
+VlnPlot(ob.list.all, features = c("percent.mt","percent.rpl","nFeature_RNA","nCount_RNA"), pt.size = 0.1, combine = F)
+```
+Prior testing demonstrated that filtering percent.mt<25 retained most of the cells with usable reads while removing low-quality cells
+```{r}
+ob.list.all <- subset(ob.list.all, subset = percent.mt < 25)
+```
+Export merged and filtered object list:
+```{r}
+saveRDS(ob.list.all, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/ob_list_all.rds")
+```
+I tried running SCTransform on the merged object, but it broke RStudio Server's memory allocation. Steve Christensen figured out a way to get around this by submitting the job to a remote HPC session. I modified his script and he ran everything. Thanks Steve!
+Load data that has been run through SCTransform, PCA and Harmony
+```{r}
+ob.list.all <- readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_merge_harmony_20201124AB.rds")
+```
+View elbow plot to choose number of dimensions for downstream use
+```{r}
+ElbowPlot(ob.list.all, ndims = 150)
+```
+The elbow occurs around 20 PC. Choose 25 dimensions to help resolve small populations.
+Run clustree iterations
+```{r clustering, eval = T}
+#Run UMAP, FindNeighbors, FindClusters
+ob.list.all <- ob.list.all %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = T) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = T) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = T, algorithm = 4) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(ob.list.all, 'harmony')
+ob.list.all[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(ob.list.all, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+saveRDS(ob.list.all, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_merge_clustree_20201125AB.rds")
+```
+A resolution of 0.7 looks good
+```{r}
+Idents(ob.list.all)<-ob.list.all$SCT_snn_res.0.7
+DimPlot(ob.list.all, pt.size=0.2, label = T)+NoLegend()
+```
+Check distribution by batch
+```{r, fig.height=20}
+DimPlot(ob.list.all, pt.size=5, label = T, split.by = "batch", ncol = 2, label.size = 10)+NoLegend()
+```
+Distribution looks OK, but not great. I'll run it by Steve.
+Check distribution of mitochondrial and ribosomal reads
+```{r}
+FeaturePlot(ob.list.all, pt.size = 0.5, label=T, features=c("percent.mt", "percent.rpl"), combine = F)
+```
+Looks like the mitochondrial and ribosomal reads are heavily contributing to clusters
+```{r}
+Idents(ob.list.all)<-ob.list.all$batch
+VlnPlot(ob.list.all, features=c("percent.mt", "percent.rpl"), combine = F, pt.size=0.1)
+```
+Removed the offending CCL4MMPNeg data set, which had really high mitochondrial reads and was driving most of the mitochondrial clustering. This created the mu_liver_edited_20201125AB.rds object, but RStudio Server crashed and I lost my notebook describing that work.
+Remove ribosomal reads
+```{r}
+ob.list.all<-readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_edited_20201125AB.rds")
+ob.list.all.RNA <- ob.list.all@assays$RNA[-c(grep("^RPL",rownames(ob.list.all@assays$RNA)),grep("^RPS",rownames(ob.list.all@assays$RNA)),grep("^MRPL",rownames(ob.list.all@assays$RNA)),grep("^MRPS",rownames(ob.list.all@assays$RNA))),]
+ob.list.all.RNA <- ob.list.all.RNA[rownames(ob.list.all.RNA),]
+ob.list.all[["RNA"]] <- CreateAssayObject(ob.list.all.RNA, min.cells = 20)
+```
+Check UMAP distribution
+```{r}
+Idents(ob.list.all)<-ob.list.all$SCT_snn_res.0.7
+DimPlot(ob.list.all, pt.size=0.2, label = T)+NoLegend()
+```
+Check distribution of mitochondrial and ribosomal reads
+```{r}
+FeaturePlot(ob.list.all, pt.size = 0.5, label=T, features=c("percent.mt", "percent.rpl"), combine = F)
+```
+Check count and gene data
+```{r}
+Idents(ob.list.all)<-ob.list.all$batch
+VlnPlot(ob.list.all, features=c("percent.mt", "percent.rpl","nCount_RNA","nCount_SCT","nFeature_RNA","nFeature_SCT"), combine = F, pt.size=0.1)
+```
+Looks pretty good. Let's output data for Steve to re-run SCTransform integration and Harmony
+```{r}
+saveRDS(ob.list.all, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_edited_20201201AB.rds")
+```
+Steve ran SCTransform, PCA and Harmony. Import the object generated with that code.
+```{r}
+ob.list <- readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_merge_edit_mt_harmony_20201130AB.rds")
+```
+Check gene and count data
+```{r}
+Idents(ob.list)<-ob.list$batch
+VlnPlot(ob.list, features=c("percent.mt", "percent.rpl","nCount_SCT","nFeature_SCT"), combine = F, pt.size=0.1)
+```
+View elbow plot to choose number of dimensions for downstream use
+```{r}
+ElbowPlot(ob.list, ndims = 150)
+```
+The elbow occurs around 20 PC. Choose 25 dimensions to help resolve small populations.
+Run clustree iterations
+```{r clustering, eval = T}
+#Run UMAP, FindNeighbors, FindClusters
+ob.list <- ob.list %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = T) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = T) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = T) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(ob.list, 'harmony')
+ob.list[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(ob.list, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_merge_clustree_20201201AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(ob.list, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+saveRDS(ob.list, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_merge_clustree_20201125AB.rds")
+```
+Resolution of 0.5 looks good. Look at clustering at this resolution
+```{r}
+ob.list<-readRDS("/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/mu_liver_merge_clustree_20201201AB.rds")
+Idents(ob.list)<-ob.list$SCT_snn_res.0.5
+DimPlot(ob.list, pt.size=0.2, label = T)
+```
+Look at contribution of each batch to each cluster
+```{r, fig.height=20}
+DimPlot(ob.list, pt.size=5, label = T, split.by = "batch", ncol = 2, label.size = 10)+NoLegend()
+table(ob.list$batch, ob.list$sample)
+```
+Check distribution of mitochondrial and ribosomal reads
+```{r}
+FeaturePlot(ob.list, pt.size = 0.5, label=T, features=c("percent.mt", "percent.rpl", "nCount_SCT", "nFeature_SCT"), combine = F)
+```
+Look at marker gene distribution
+```{r}
+FeaturePlot(ob.list, features = c("percent.mt", "Ptprc", "Alb", "Stab2", "S100a9", "Hdc", "Csf1r", "Ly6c2", "Cd3g", "Cd4", "Cd8a", "Cd8b1", "Nkg7", "Klrb1c", "Klrd1", "Clec4f", "Ms4a1", "Jchain", "Irf8", "Siglech", "Dcn", "Clu", "Bgn", "Pdpn", "Spp1", "Hbb-bs", "Mki67"), label = T, pt.size = 0.2, combine = F, repel = T)
+```
+Find markers for clusters
+```{r}
+ob.list_markers<-FindAllMarkers(ob.list, logfc.threshold = 0.75)
+```
+Annotate clusters
+```{r}
+ob.list$SCT_snn_res.0.5 -> ob.list$seurat_clusters_allcells
+ob.list <- RenameIdents(ob.list, `0`="B_cells",
+                        `3`="B_cells",
+                        `6`="B_cells",
+                        `17`="B_cells",
+                        `21`="B_cells",
+                        `2`="T_cells",
+                        `12`="T_cells",
+                        `19`="T_cells",
+                        `23`="T_cells",
+                        `27`="T_cells",
+                        `4`="T_cells",
+                        `5`="T_cells",
+                        `7`="T_cells",
+                        `9`="T_cells",
+                        `10`="T_cells",
+                        `22`="T_cells",
+                        `32`="T_cells",
+                        `13`="mito_high",
+                        `18`="mito_high",
+                        `14`="Endothelial",
+                        `35`="HSC",
+                        `1`="Myeloid",
+                        `11`="Myeloid",
+                        `33`="Myeloid",
+                        `36`="Myeloid",
+                        `37`="Myeloid",
+                        `25`="Plasma_cell",
+                        `8`="Neutrophil",
+                        `28`="Basophil",
+                        `29`="Cholangiocyte",
+                        `24`="RBC",
+                        `30`="RBC",
+                        `31`="RBC",
+                        `34`="RBC",
+                        `20`="pDC",
+                        `16`="Hepatocyte",
+                        `15`="multiplets",
+                        `26`="multiplets"
+                        )
+Idents(ob.list) -> ob.list$annotations_allcells
+DimPlot(ob.list, reduction = "umap", pt.size = .1, label = T)+NoLegend()
+#saveRDS(ob.list, "/hpc/grid/wip_cmg_systems-immunology/abarron/SAMac_paper/velocytoR/ob_list_annotated.rds")
+```
+load data
+```{r}
+ob.list<-readRDS("/sbgenomics/project-files/mu_liver_merge_harmony_20201124AB.rds")
+```
+This object previously underwent SCTransform, PCA and Harmony integration.
+View ElbowPlot to select number of dimensions for UMAP etc.
+```{r}
+ElbowPlot(ob.list, ndims=100)
+```
+The elbow appears to be around 17 PCs. Use 25 PCs for further clustering to allow resolution of rare cell types.
+Run clustree
+```{r clustering, eval = T}
+#Run UMAP, FindNeighbors, FindClusters
+ob.list <- ob.list %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = T) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = T) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = T) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(ob.list, 'harmony')
+ob.list[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(ob.list, "/sbgenomics/workspace/mouse_liver/mu_liver_merge_clustree_20201124AB.rds")
+```
+load data
+```{r}
+ob.list<-readRDS("/sbgenomics/workspace/mouse_liver/mu_liver_merge_clustree_20201124AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(ob.list, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Resolution of 0.7 looks good
+```{r}
+Idents(ob.list)<-ob.list$SCT_snn_res.0.7
+DimPlot(ob.list, pt.size = 0.2, label = T)+NoLegend()
+```
+Check contributions of each batch to each cluster
+```{r, fig.height=15}
+DimPlot(ob.list, split.by = "batch", ncol = 2, pt.size = 0.2, label = T)+NoLegend()
+```
+Clusters 5, 18, 21 and 25 look like they're mostly coming from the MMPsense data. Check distribution of mitochondrial and ribosomal reads.
+```{r}
+FeaturePlot(ob.list, features = c("percent.mt", "percent.rpl"), label = T, combine = F)
+```
+Ugh, it looks like regressing out variation due to mitochondrial reads didn't fix cells clustering by mitochondrial reads. Take a closer look at which data sets are making the major contributions to these clusters.
+```{r, fig.width=10}
+Idents(ob.list)<-ob.list$sample
+VlnPlot(ob.list, features = c("percent.mt", "percent.rpl"), combine = F, pt.size = 0.2)
+```
+Subset data to remove CCL4MMPNeg
+```{r}
+ob.list<-readRDS("/sbgenomics/workspace/mouse_liver/mu_liver_merge_clustree_20201124AB.rds")
+Idents(ob.list)<-ob.list$sample
+ob.list.edit<-subset(ob.list, idents = "CCL4MMPNeg", invert = T)
+saveRDS(ob.list, "/sbgenomics/workspace/mouse_liver/mu_liver_merge_edit_20201128AB.rds")
+```
+Re-run integration, PCA, Harmony integration, UMAP, etc.
+```{r}
+ob.list.edit<-readRDS("/sbgenomics/workspace/mouse_liver/mu_liver_merge_edit_20201128AB.rds")
+ob.list.edit<-ob.list.edit %>% SCTransform(vars.to.regress = c("percent.mt", "percent.rpl")) %>% RunPCA(pc.genes = ob.list.edit@var.genes, npcs = 100) %>% RunHarmony(group.by.vars = "batch", assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+saveRDS(ob.list, "/sbgenomics/workspace/mouse_liver/mu_liver_merge_edit_harmony_20201128AB.rds")
+ob.list.edit <- ob.list.edit %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(ob.list.edit, 'harmony')
+ob.list.edit[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(ob.list, "/sbgenomics/workspace/mouse_liver/mu_liver_merge_edit_clustree_20201128AB.rds")
+```
+Visualize clustree
+```{r clustree, fig.align="center"}
+clustree(ob.list, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Load data
+```{r}
+leukocytes<-readRDS("/sbgenomics/project-files/leukocytes_20201202AB.rds")
+```
+Perform SCTransform, RunPCA and Harmony integration
+```{r}
+leukocytes <- SCTransform(leukocytes, verbose = T, vars.to.regress = "percent.mt")
+leukocytes <- RunPCA(leukocytes, pc.genes = leukocytes@var.genes, npcs = 100, verbose = FALSE)
+saveRDS(leukocytes, "/sbgenomics/workspace/mouse_liver/leukocytes_PCA_20201202AB.rds")
+leukocytes <- leukocytes %>% 
+  RunHarmony(c("batch"), plot_convergence = F, 
+             assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+#if(!is.null(leukocytes@assays$SCT))
+saveRDS(leukocytes, "/sbgenomics/workspace/mouse_liver/leukocytes_harmony_20201202AB.rds")
+```
+Run clustree UMAP iteration
+```{r}
+leukocytes <- leukocytes %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(leukocytes, 'harmony')
+leukocytes[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(leukocytes, "/sbgenomics/workspace/mouse_liver/leukocytes_clustree_20201202AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+leukocytes<-readRDS("/sbgenomics/workspace/mouse_liver/leukocytes_clustree_20201202AB.rds")
+clustree(leukocytes, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Resolution of 0.6 looks good
+```{r}
+Idents(leukocytes)<-leukocytes$SCT_snn_res.0.6
+DimPlot(leukocytes, pt.size = 0.2, label = T)+NoLegend()
+```
+Check %mt distribution
+```{r}
+FeaturePlot(leukocytes, features = c("percent.mt", "percent.rpl", "nCount_SCT", "nFeature_SCT"), label = T, combine = F, pt.size = 0.2)
+```
+Check marker gene distribution
+```{r}
+FeaturePlot(leukocytes, features = c("Ptprc", "Alb", "Stab2", "S100a9", "Hdc", "Csf1r", "Ly6c2", "Cd3g", "Cd4", "Cd8a", "Cd8b1", "Nkg7", "Klrb1c", "Klrd1", "Clec4f", "Ms4a1", "Jchain", "Irf8", "Siglech", "Dcn", "Clu", "Bgn", "Pdpn", "Spp1", "Hbb-bs", "Mki67"), label = T, pt.size = 0.2, combine = F, repel = T)
+```
+Resolution of 0.6 looks good
+```{r}
+Idents(leukocytes)<-leukocytes$SCT_snn_res.0.6
+leukocytes_markers<-FindAllMarkers(leukocytes)
+write.csv(leukocytes_markers, "/sbgenomics/workspace/mouse_liver/leukocytes_markers_20201203AB.csv")
+```
+Annotate clusters with cell identities
+```{r}
+Idents(leukocytes)->leukocytes$seurat_clusters_leukocytes
+leukocytes<-RenameIdents(leukocytes,
+             `0`="Monocytes/Macrophages",
+             `1`="B cells",
+             `2`="B cells",
+             `3`="T cells",
+             `4`="T cells",
+             `5`="NK",
+             `6`="NK",
+             `7`="T cells",
+             `8`="T cells",
+             `9`="T cells",
+             `10`="B cells",
+             `11`="T cells",
+             `12`="Neutrophils",
+             `13`="DCs",
+             `14`="B cells",
+             `15`="Monocytes/Macrophages",
+             `16`="B cells",
+             `17`="pDCs",
+             `18`="B cells",
+             `19`="Plasma cells",
+             `20`="Monocytes/Macrophages",
+             `21`="T cells",
+             `22`="B cells",
+             `23`="Monocytes/Macrophages",
+             `24`="T cells",
+             `25`="B cells",
+             `26`="Basophils",
+             `27`="Monocytes/Macrophages",
+             `28`="B cells",
+             `29`="B cells",
+             `30`="Neutrophils",
+             `31`="B cells",
+             `32`="T cells",
+             `33`="Monocytes/Macrophages",
+             `34`="Monocytes/Macrophages",
+             `35`="B cells",
+             `36`="B cells",
+             `37`="Neutrophils")
+Idents(leukocytes)->leukocytes$annotations_leukocytes
+saveRDS(leukocytes, "/sbgenomics/workspace/mouse_liver/leukocytes_annotated_20201215AB.rds")
+```
+Subset myeloid cells (monocytes, macrophages & cDCs)
+```{r}
+myeloid<-subset(leukocytes, idents = c("Monocytes/Macrophages","DCs"))
+table(Idents(myeloid))
+DimPlot(myeloid, pt.size = 0.2, label = T)+NoLegend()
+saveRDS(myeloid, "/sbgenomics/workspace/mouse_liver/myeloid_raw_20201215AB.rds")
+```
+Myeloid integration, PCA, Harmony integration, UMAP, etc.
+```{r}
+myeloid<-myeloid %>% SCTransform(vars.to.regress = c("percent.mt")) %>% RunPCA(pc.genes = myeloid@var.genes, npcs = 100) %>% RunHarmony(group.by.vars = "batch", assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+saveRDS(myeloid, "/sbgenomics/workspace/mouse_liver/myeloid_harmony_20201215AB.rds")
+ElbowPlot(myeloid, ndims = 100)
+```
+25 PCs looks OK for UMAP. May have to decrease later.
+Run clustree
+```{r}
+myeloid <- myeloid %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(myeloid, 'harmony')
+myeloid[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(myeloid, "/sbgenomics/workspace/mouse_liver/myeloid_clustree_20201215AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(myeloid, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Looks stable at a resolution of 0.4. Try this first.
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.4
+DimPlot(myeloid, pt.size = 0.2, label = T)+NoLegend()
+```
+Check batch contributions
+```{r}
+Idents(myeloid)<-myeloid$batch
+DimPlot(myeloid, pt.size = 0.2, label = F)
+Idents(myeloid)<-myeloid$SCT_snn_res.0.4
+```
+Looks fairly even. Check distribution of mitochondrial reads.
+```{r}
+FeaturePlot(myeloid, features = c("percent.mt", "percent.rpl", "nCount_SCT", "nFeature_SCT"), combine = F, label = T)
+```
+Find markers of clusters
+```{r}
+myeloid_markers<-FindAllMarkers(myeloid)
+write.csv(myeloid_markers, "/sbgenomics/workspace/mouse_liver/myeloid_markers_20201215AB.csv")
+```
+Check DimPlots of different resolutions
+```{r}
+DimPlot(myeloid, group.by = "SCT_snn_res.0.4", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.5", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.6", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.7", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.8", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.9", pt.size = 0.2, label = T)+NoLegend()
+```
+Check SAM markers at resolution 0.4
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.4
+FeaturePlot(myeloid, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Clec4f"), pt.size = 0.2, label = T, combine = F)
+```
+Check SAM markers at resolution 0.8
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.8
+FeaturePlot(myeloid, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Clec4f"), pt.size = 0.2, label = T, combine = F)
+```
+Find markers at resolution of 0.8
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.8
+myeloid_markers_0.8<-FindAllMarkers(myeloid)
+write.csv(myeloid_markers_0.8, "/sbgenomics/workspace/mouse_liver/myeloid_markers__0.8_20201221AB.csv")
+```
+Cluster 4 is T cells, cluster 11 is B cells and cluster 22 is HSC. Remove these.
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.8
+myeloid_clean<-subset(myeloid, idents = c(4, 11, 22), invert = T)
+table(Idents(myeloid_clean))
+```
+Save clean myeloid subset, re-run integration etc.
+```{r}
+saveRDS(myeloid_clean, "/sbgenomics/workspace/mouse_liver/myeloid_clean_raw_20201221AB.rds")
+myeloid_clean<-myeloid_clean %>% SCTransform(vars.to.regress = c("percent.mt")) %>% RunPCA(pc.genes = myeloid_clean@var.genes, npcs = 100) %>% RunHarmony(group.by.vars = "batch", assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+saveRDS(myeloid_clean, "/sbgenomics/workspace/mouse_liver/myeloid_clean_harmony_20201221AB.rds")
+ElbowPlot(myeloid_clean, ndims = 100)
+```
+25 PCs looks OK for UMAP. May have to decrease later.
+Run clustree
+```{r}
+myeloid_clean <- myeloid_clean %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(myeloid_clean, 'harmony')
+myeloid_clean[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(myeloid_clean, "/sbgenomics/workspace/mouse_liver/myeloid_clean_clustree_20201221AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(myeloid_clean, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Check batch contributions
+```{r}
+Idents(myeloid_clean)<-myeloid_clean$batch
+DimPlot(myeloid_clean, pt.size = 0.2, label = F)
+Idents(myeloid_clean)<-myeloid_clean$SCT_snn_res.0.4
+```
+Looks fairly even. Check distribution of mitochondrial reads.
+```{r}
+FeaturePlot(myeloid_clean, features = c("percent.mt", "percent.rpl", "nCount_SCT", "nFeature_SCT"), combine = F, label = T)
+```
+Check DimPlots of different resolutions
+```{r}
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.0.4", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.0.5", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.0.6", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.0.7", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.0.8", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.0.9", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid_clean, group.by = "SCT_snn_res.1", pt.size = 0.2, label = T)+NoLegend()
+```
+Check SAM markers at resolution 0.8
+```{r}
+Idents(myeloid_clean)<-myeloid_clean$SCT_snn_res.0.8
+FeaturePlot(myeloid_clean, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Cxcl16","Apoe","Clec4f"), pt.size = 0.2, label = T, combine = F)
+DotPlot(myeloid_clean, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Cxcl16","Apoe","Clec4f"))
+```
+Find markers at resolution of 0.8
+```{r}
+Idents(myeloid_clean)<-myeloid_clean$SCT_snn_res.0.8
+myeloid_clean_markers_0.8<-FindAllMarkers(myeloid_clean)
+write.csv(myeloid_clean_markers_0.8, "/sbgenomics/workspace/mouse_liver/myeloid_clean_markers_0.8_20201221AB.csv")
+```
+Annotate identities based on marker genes and cluster locations
+```{r}
+myeloid_clean <- readRDS("/sbgenomics/workspace/mouse_liver/myeloid_clean_clustree_20201221AB.rds")
+Idents(myeloid_clean)<-myeloid_clean$SCT_snn_res.0.8
+Idents(myeloid_clean)->myeloid_clean$seurat_clusters_myeloid
+myeloid_clean<-RenameIdents(myeloid_clean,
+                            `0`="conventional monocytes",
+                            `1`="SAM3",
+                            `2`="SAM2",
+                            `3`="immature DC",
+                            `4`="peritoneal macrophages",
+                            `5`="nonclassical monocytes",
+                            `6`="SAM4",
+                            `7`="pre-SAM",
+                            `8`="nonclassical monocytes",
+                            `9`="nonclassical monocytes",
+                            `10`="post-efferocytosis Kupffer cells",
+                            `11`="ApoE macrophages",
+                            `12`="SAM1",
+                            `13`="cDC1",
+                            `14`="IFN-stimulated monocytes",
+                            `15`="regulatory DC",
+                            `16`="cDC2",
+                            `17`="Kupffer cells",
+                            `18`="nonclassical monocytes",
+                            `19`="cycling cells",
+                            `20`="conventional monocytes")
+Idents(myeloid_clean)->myeloid_clean$annotations_myeloid_paper
+DimPlot(myeloid_clean, pt.size = 0.2, label = F)
+saveRDS(myeloid_clean, "/sbgenomics/output-files/mouse_liver/myeloid_clean_annotated_20201222AB.rds")
+```
+Annotate disease states
+```{r}
+Idents(myeloid_clean)<-myeloid_clean$sample
+myeloid_clean<-RenameIdents(myeloid_clean,
+                            "CCl4_1"="CCl4",
+                            "CCl4_2"="CCl4",
+                            "CCl4_ctrl1"="CCl4_ctrl",
+                            "CCl4_ctrl2"="CCl4_ctrl",
+                            "CCL4MMPPos"="MMPsense",
+                            "OliveMMPNeg"="MMPsense",
+                            "OliveMMPPos"="MMPsense",
+                            "XC23_GAN40wk"="GAN40wk",
+                            "XC23_GAN40wk_ctrl"="GAN40wk_ctrl",
+                            "XC24_chow"="GAN40wk_ctrl",
+                            "XC24_GAN"="GAN40wk",
+                            "XC24_GAN_TGF"="GAN40wk_aTGF",
+                            "XC43_chow"="GAN40wk_ctrl",
+                            "XC43_GAN"="GAN40wk",
+                            "XC43_GAN_TGF"="GAN40wk_aTGF")
+Idents(myeloid_clean)->myeloid_clean$disease
+DimPlot(myeloid_clean, pt.size = 0.2, label = F)
+```
+Save RDS
+```{r}
+Idents(myeloid_clean)<-myeloid_clean$annotations_myeloid_paper
+saveRDS(myeloid_clean, "/sbgenomics/output-files/mouse_liver/myeloid_clean_annotated_20201222AB.rds")
+```
+Read RDS
+```{r}
+myeloid_clean<-readRDS("/sbgenomics/project-files/mouse_liver/myeloid_clean_annotated_20201222AB.rds")
+DimPlot(myeloid_clean, pt.size = 0.2, label = F)
+```
+
+Identify non-monocyte and macrophage populations.
+```{r}
+table(Idents(myeloid_clean))
+```
+Remove non-monocyte and macrophage clusters.
+```{r}
+myeloid<-subset(myeloid_clean, idents = c("immature DC", "cDC1", "regulatory DC", "cDC2", "cycling cells"), invert = T)
+table(Idents(myeloid))
+```
+Save clean myeloid subset, re-run integration etc.
+```{r}
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_raw_20210123AB.rds")
+myeloid_clean<-myeloid_clean %>% SCTransform(vars.to.regress = c("percent.mt")) %>% RunPCA(pc.genes = myeloid_clean@var.genes, npcs = 100) %>% RunHarmony(group.by.vars = "batch", assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_harmony_20210123AB.rds")
+ElbowPlot(myeloid_clean, ndims = 100)
+```
+25 PCs looks OK for UMAP. May have to decrease later.
+Run clustree
+```{r}
+myeloid <- myeloid %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(myeloid, 'harmony')
+myeloid[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_clustree_20210123AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(myeloid, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Check DimPlots of different resolutions
+```{r}
+DimPlot(myeloid, group.by = "SCT_snn_res.0.4", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.5", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.6", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.7", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.8", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.9", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.1", pt.size = 0.2, label = T)+NoLegend()
+```
+Remove non-monocyte and macrophage clusters.
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.4
+myeloid<-subset(myeloid, idents = c(3,6,12), invert = T)
+table(Idents(myeloid))
+```
+Save clean myeloid subset, re-run integration etc.
+```{r}
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_raw_20210124AB.rds")
+myeloid<-myeloid %>% SCTransform(vars.to.regress = c("percent.mt")) %>% RunPCA(pc.genes = myeloidn@var.genes, npcs = 100) %>% RunHarmony(group.by.vars = "batch", assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_harmony_20210124AB.rds")
+ElbowPlot(myeloid_clean, ndims = 100)
+```
+25 PCs looks OK for UMAP. May have to decrease later.
+Run clustree
+```{r}
+myeloid <- myeloid %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(myeloid, 'harmony')
+myeloid[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_clustree_20210124AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(myeloid, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Check DimPlots of different resolutions
+```{r}
+DimPlot(myeloid, group.by = "SCT_snn_res.0.4", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.5", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.6", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.7", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.8", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.9", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.1", pt.size = 0.2, label = T)+NoLegend()
+```
+Check SAM markers at resolution 0.4
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.4
+FeaturePlot(myeloid, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Cxcl16","Apoe","Clec4f"), pt.size = 0.2, label = T, combine = F)
+DotPlot(myeloid, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Cxcl16","Apoe","Clec4f"))
+```
+Remove non-monocyte and macrophage clusters.
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.4
+myeloid<-subset(myeloid, idents = c(7), invert = T)
+table(Idents(myeloid))
+```
+Save clean myeloid subset, re-run integration etc.
+```{r}
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_raw_20210125AB.rds")
+myeloid<-myeloid %>% SCTransform(vars.to.regress = c("percent.mt")) %>% RunPCA(pc.genes = myeloid@var.genes, npcs = 100) %>% RunHarmony(group.by.vars = "batch", assay.use = "SCT", max.iter.harmony = 20, verbose=T)
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_harmony_20210125AB.rds")
+ElbowPlot(myeloid, ndims = 100)
+```
+25 PCs looks OK for UMAP. May have to decrease later.
+Run clustree
+```{r}
+myeloid <- myeloid %>% 
+  RunUMAP(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindNeighbors(reduction = "harmony", dims = 1:25, verbose = F) %>% 
+  FindClusters(resolution = seq(0,1.4,0.1), verbose = F) %>% 
+  identity()
+# Find optimal clustering
+harmony_embeddings <- Embeddings(myeloid, 'harmony')
+myeloid[['clustree']] <- CreateDimReducObject(embeddings = harmony_embeddings, key = "SCT_snn_res.", assay = "SCT")
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_clustree_20210125AB.rds")
+```
+Visualize clustering permutations
+```{r clustree, fig.align="center"}
+clustree(myeloid, prefix = "SCT_snn_res.", node_size=4, node_colour="lightblue")
+```
+Check DimPlots of different resolutions
+```{r}
+DimPlot(myeloid, group.by = "SCT_snn_res.0.4", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.5", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.6", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.7", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.8", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.0.9", pt.size = 0.2, label = T)+NoLegend()
+DimPlot(myeloid, group.by = "SCT_snn_res.1", pt.size = 0.2, label = T)+NoLegend()
+```
+Find markers at resolution of 0.6
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.6
+myeloid_markers_0.6<-FindAllMarkers(myeloid)
+write.csv(myeloid_markers_0.6, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_markers_0.6_20210125AB.csv")
+View(myeloid_markers_0.6)
+```
+Check SAM markers at resolution 0.6
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.6
+FeaturePlot(myeloid, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Cxcl16","Apoe","Clec4f"), pt.size = 0.2, label = T, combine = F)
+DotPlot(myeloid, features = c("Trem2","Cd9","Cd63","Spp1","Fabp5","Gpnmb","Cxcl16","Apoe","Clec4f"))
+```
+Annotate identities based on marker genes and cluster locations
+```{r}
+Idents(myeloid)<-myeloid$SCT_snn_res.0.6
+Idents(myeloid)->myeloid$seurat_clusters_myeloid
+myeloid<-RenameIdents(myeloid,
+                            `0`="Monocytes",
+                            `1`="MHCII high",
+                            `2`="Inflammatory",
+                            `3`="Spp1 SAM",
+                            `4`="ApoE Cd81",
+                            `5`="Atf3 high",
+                            `6`="M2-like",
+                            `7`="Trem2 ApoE",
+                            `8`="Ccl3 high",
+                            `9`="KC",
+                            `10`="M2-like",
+                            `11`="IFN responsive",
+                            `12`="IFN responsive",
+                            `13`="Atf3 high",
+                            `14`="Fn1 high")
+Idents(myeloid)->myeloid$annotations_myeloid_paper
+DimPlot(myeloid, pt.size = 0.2, label = F)
+saveRDS(myeloid, "/sbgenomics/output-files/2023_SI_paper_rmd_rds/myeloid_annotated_20210326AB.rds")
+```
